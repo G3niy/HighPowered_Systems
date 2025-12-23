@@ -1,0 +1,84 @@
+services:
+
+  db:
+    image: postgres:15
+    container_name: db
+    environment:
+      POSTGRES_USER: root
+      POSTGRES_PASSWORD: root
+      POSTGRES_DB: db
+      PGDATA: "/var/lib/postgresql/data/pgdata"
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U root" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - postgresdata:/var/lib/postgresql/data
+      - ./init:/docker-entrypoint-initdb.d
+      - ./data:/tmp/data
+    ports:
+      - 5432:5432
+    networks:
+      - bigdata-network
+
+
+  spark-app:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+      cassandra:
+        condition: service_healthy
+    command: >
+        sh -c "
+          echo 'Запуск ETL_snowflake' &&
+          /opt/spark/bin/spark-submit /app/ETL_snowflake.py &&
+          echo 'Запуск ETL_report...' &&
+          /opt/spark/bin/spark-submit /app/ETL_report_all.py
+        "
+    volumes:
+      - ./spark_scripts/:/app/
+    networks:
+      - bigdata-network
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    container_name: clickhouse
+    ports:
+      - "8123:8123"  
+      - "9000:9000" 
+    environment:
+      CLICKHOUSE_DB: clickhouse
+      CLICKHOUSE_USER: admin
+      CLICKHOUSE_PASSWORD: password
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - ./init-scripts:/docker-entrypoint-initdb.d
+    networks:
+      - bigdata-network
+
+  cassandra:
+    image: cassandra:latest
+    container_name: cassandra
+    healthcheck:
+      test: ["CMD-SHELL", "cqlsh -e 'describe cluster' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    ports:
+      - "9042:9042" 
+    volumes:
+      - cassandra_data:/var/lib/cassandra
+    networks:
+      - bigdata-network
+
+volumes:
+  clickhouse_data:
+  cassandra_data:
+  postgresdata:
+
+networks:
+  bigdata-network:
+    driver: bridge
+  
